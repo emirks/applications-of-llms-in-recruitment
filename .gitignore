@@ -4,5 +4,6 @@
 *.yaml
 *.csv
 *.jsonl
-.env
-
+*.env
+__pycache__
+*.pyc
