@@ -56,8 +56,8 @@ def create_job_description_files(input_file: str, output_dir: str, num_files: in
 
 if __name__ == "__main__":
     # Configure paths
-    input_file = r"job_descriptions\\techmap-jobs-export-2022-10_ie.json"  # Your input JSON file
-    output_dir = r"data\job_descriptions\\format_txt"       # Output directory for text files
+    input_file = r"data\\job_descriptions\\techmap-jobs-export-2022-10_ie.json"  # Your input JSON file
+    output_dir = r"data\\job_descriptions\\format_txt"       # Output directory for text files
     
     # Process job descriptions
-    create_job_description_files(input_file, output_dir)
+    create_job_description_files(input_file, output_dir, num_files=100000)
