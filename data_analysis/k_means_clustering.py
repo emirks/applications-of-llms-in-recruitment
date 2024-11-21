@@ -1,5 +1,6 @@
 import os
 import numpy as np
+import shutil
 from tqdm import tqdm
 from pathlib import Path
 from sklearn.cluster import KMeans
@@ -60,7 +61,8 @@ def analyze_clusters(labels: np.ndarray, filenames: list, kmeans: KMeans, output
         cluster_files[label].append(filename)
     
     # Save analysis results
-    with open(os.path.join(output_dir, 'cluster_analysis.txt'), 'w') as f:
+    analysis_file = os.path.join(output_dir, 'cluster_analysis.txt')
+    with open(analysis_file, 'w') as f:
         f.write("Cluster Analysis Results\n")
         f.write("=======================\n\n")
         
@@ -68,10 +70,40 @@ def analyze_clusters(labels: np.ndarray, filenames: list, kmeans: KMeans, output
             f.write(f"Cluster {cluster}:\n")
             f.write(f"Number of documents: {cluster_counts[cluster]}\n")
             f.write(f"Sample files: {', '.join(cluster_files[cluster][:5])}\n\n")
+    
+    return cluster_files
+
+def organize_files_by_cluster(labels: np.ndarray, filenames: list, txt_dir: str, output_dir: str):
+    """Organize text files into cluster-specific folders"""
+    print("Organizing files into cluster folders...")
+    clustered_txt_dir = os.path.join(output_dir, 'clustered_txt')
+    Path(clustered_txt_dir).mkdir(exist_ok=True)
+    
+    # Create mapping of files to clusters
+    cluster_files = defaultdict(list)
+    for label, filename in zip(labels, filenames):
+        cluster_files[label].append(filename.replace('.npy', '.txt'))
+    
+    # Copy files to respective cluster folders
+    for cluster, files in tqdm(cluster_files.items()):
+        cluster_dir = os.path.join(clustered_txt_dir, f"cluster_{cluster}")
+        Path(cluster_dir).mkdir(exist_ok=True)
+        
+        for filename in files:
+            source_path = os.path.join(txt_dir, filename)
+            dest_path = os.path.join(cluster_dir, filename)
+            
+            try:
+                if os.path.exists(source_path):
+                    shutil.copy2(source_path, dest_path)
+            except Exception as e:
+                print(f"Error copying {filename}: {str(e)}")
+                continue
 
 def main():
     # Configure directories
     embedding_dir = "data/job_descriptions/format_embedding"
+    txt_dir = "data/job_descriptions/format_txt"
     output_dir = "data/job_descriptions/clustering_results"
     Path(output_dir).mkdir(parents=True, exist_ok=True)
     
@@ -87,7 +119,11 @@ def main():
     # Analyze and save cluster information
     analyze_clusters(labels, filenames, kmeans, output_dir)
     
+    # Organize files into cluster folders
+    organize_files_by_cluster(labels, filenames, txt_dir, output_dir)
+    
     print(f"Clustering analysis completed. Results saved to {output_dir}")
+    print(f"Clustered text files can be found in {output_dir}/clustered_txt")
 
 if __name__ == "__main__":
     main()
