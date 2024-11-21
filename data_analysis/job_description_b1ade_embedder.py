@@ -3,6 +3,7 @@ import numpy as np
 from tqdm import tqdm
 from pathlib import Path
 from embeddings.b1ade_embed import B1adeEmbed
+import random
 
 def create_embeddings(input_dir: str, output_dir: str, batch_size: int = 32):
     """
@@ -19,12 +20,19 @@ def create_embeddings(input_dir: str, output_dir: str, batch_size: int = 32):
     
     # Get list of all txt files
     txt_files = [f for f in os.listdir(input_dir) if f.endswith('.txt')]
+    
+    # Randomize the file order
+    random.shuffle(txt_files)
     total_files = len(txt_files)
     
     print(f"Found {total_files} files to process")
     
     # Initialize the embedding model
     embedding_model = B1adeEmbed()
+    
+    # Track processed files
+    processed_count = 0
+    skipped_count = 0
     
     # Process files in batches
     for i in tqdm(range(0, total_files, batch_size)):
@@ -38,6 +46,7 @@ def create_embeddings(input_dir: str, output_dir: str, batch_size: int = 32):
                 
                 # Skip if embedding already exists
                 if os.path.exists(output_path):
+                    skipped_count += 1
                     continue
                 
                 # Read the job description
@@ -54,17 +63,20 @@ def create_embeddings(input_dir: str, output_dir: str, batch_size: int = 32):
                 # Save embedding
                 np.save(output_path, embedding)
                 
+                processed_count += 1
+                
             except Exception as e:
                 print(f"Error processing {filename}: {str(e)}")
                 continue
-        
-
+    
+    print(f"Processing completed! Processed {processed_count} new files, skipped {skipped_count} existing files.")
+    
     # Final cleanup
     B1adeEmbed.free_memory()
     print("Embedding generation completed!")
 
 if __name__ == "__main__":
     input_dir = "data/job_descriptions/format_txt"
-    output_dir = "data/job_descriptions/format_embedding"
+    output_dir = "data/job_descriptions/b1ade_embedding"
     
     create_embeddings(input_dir, output_dir, batch_size=32)
