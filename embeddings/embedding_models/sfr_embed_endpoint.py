@@ -1,4 +1,4 @@
-from . import BaseEmbedding
+from .. import BaseEmbedding
 from ai_systems.utils.utils import BaseValidator
 from ai_systems.utils.exceptions import ModelServiceError
 

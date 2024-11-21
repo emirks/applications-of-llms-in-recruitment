@@ -1,4 +1,4 @@
-from . import BaseEmbedding
+from .. import BaseEmbedding
 from ai_systems.utils.utils import BaseValidator
 from ai_systems.utils.exceptions import ModelServiceError, PayloadTooLargeError, EmbeddingError
 
@@ -24,65 +24,81 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 HF_TOKEN = os.environ['DEV_HUGGINGFACE_TOKEN']
-API_URL = "https://bddwua1qb0minh42.eu-west-1.aws.endpoints.huggingface.cloud"
+API_URL = "https://lw1bfncqv3sue1w0.us-east-1.aws.endpoints.huggingface.cloud"
 HEADERS = {
     "Accept": "application/json",
     "Authorization": f"Bearer {HF_TOKEN}",
     "Content-Type": "application/json",
 }
 
-class StellaEndpoint(BaseEmbedding):
+class MixedBreadLargeV1HuggingFaceEndpoint(BaseEmbedding):
     def __init__(self, api_url=API_URL, headers=HEADERS, cache_dir=None):
         self.api_url = api_url
         self.headers = headers
         self.validator = BaseValidator()
-        self.cache = {}
-        logger.info("StellaEndpoint initialized with API URL: %s", self.api_url)
+        self.cache = {}  # Simple in-memory cache
+        logger.info("HuggingfaceEmbedder initialized with API URL: %s", self.api_url)
 
     def get_embedding(self, text: str, should_chunk: bool = False):
         """Get embedding with retry logic and error handling"""
         try:
+            # Input validation
             self.validator.type_check(obj=text, obj_type=str, obj_name='text')
             
+            # Check cache first
             cache_key = hash(text)
             if cache_key in self.cache:
+                logger.debug("Cache hit for text")
                 return self.cache[cache_key]
 
-            # Simplify the payload structure
-            payload = {
-                "inputs": text,  # Just send the text directly
-                "parameters": {
-                    "wait_for_model": True
-                }
-            }
-            
-            logger.info(f"Sending request with payload: {payload}")
+            # If previous attempt failed with PayloadTooLarge or text is long, chunk it
+            if should_chunk:  # Conservative token estimate
+                logger.info("Processing text in chunks due to length or previous error")
+                chunks = self._chunk_text(text)
+                chunk_embeddings = []
+                
+                for chunk in chunks:
+                    payload = {"inputs": chunk, "parameters": {}}
+                    response = requests.post(self.api_url, headers=self.headers, json=payload)
+                    
+                    if response.status_code == 200:
+                        chunk_embeddings.append(np.array(response.json()))
+                    elif response.status_code == 413:
+                        logger.error(f"Chunk still too large: {len(chunk)} chars")
+                        raise PayloadTooLargeError("Chunk still exceeds size limit")
+                    else:
+                        raise ModelServiceError(f"Chunk embedding failed with status code: {response.status_code}")
+                
+                if not chunk_embeddings:
+                    raise EmbeddingError("No valid embeddings generated from chunks")
+                    
+                embeddings = np.mean(chunk_embeddings, axis=0)
+                self.cache[cache_key] = embeddings
+                return embeddings
+
+            # Regular request without chunking
+            logger.info("Sending request to Huggingface API for text embedding")
+            payload = {"inputs": text, "parameters": {}}
             response = requests.post(self.api_url, headers=self.headers, json=payload)
-            logger.info(f"Response status: {response.status_code}")
-            logger.info(f"Response content: {response.text}")
             
             if response.status_code == 200:
-                try:
-                    embedding = response.json()
-                    if isinstance(embedding, list) and len(embedding) > 0:
-                        # Convert to numpy array
-                        embedding_array = np.array(embedding)
-                        if np.any(np.isnan(embedding_array)):
-                            raise ModelServiceError("API returned NaN values in embedding")
-                        self.cache[cache_key] = embedding_array
-                        return embedding_array
-                    else:
-                        raise ModelServiceError(f"Unexpected response format: {embedding}")
-                except Exception as e:
-                    logger.error(f"Error processing response: {str(e)}")
-                    raise ModelServiceError(f"Failed to process API response: {str(e)}")
+                embeddings = np.array(response.json())
+                self.cache[cache_key] = embeddings
+                return embeddings
             elif response.status_code == 413:
-                raise PayloadTooLargeError("Input text too large")
+                logger.info("Payload too large, will retry with chunking")
+                return self.get_embedding(text, should_chunk=True)
+            elif response.status_code == 429:
+                raise ModelServiceError("API rate limit exceeded")
+            elif response.status_code == 503:
+                raise ModelServiceError("Service temporarily unavailable")
             else:
-                raise ModelServiceError(f"API error: {response.status_code}, {response.text}")
+                raise ModelServiceError(f"API error: {response.status_code}")
 
+        except requests.exceptions.RequestException as e:
+            raise ModelServiceError(f"Request failed: {str(e)}")
         except Exception as e:
-            logger.error(f"Error during embedding: {str(e)}")
+            logger.error(f"Unexpected error during embedding: {str(e)}")
             raise ModelServiceError(f"Embedding generation failed: {str(e)}")
 
     def _chunk_text(self, text: str, max_tokens: int = 512) -> List[str]:
@@ -123,3 +139,9 @@ class StellaEndpoint(BaseEmbedding):
         
         logger.info(f"Split text into {len(chunks)} chunks")
         return chunks
+
+# Example usage
+if __name__ == "__main__":
+    embedder = MixedBreadLargeV1HuggingFaceEndpoint()
+    output = embedder.get_embedding("This sound track was beautiful! It paints the scenery in your mind so well I would recommend it even to people who hate video game music!")
+    print(output)
