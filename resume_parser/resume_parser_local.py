@@ -75,9 +75,8 @@ class ResumeParser:
             logger.error(f"Failed to create models from pipeline configuration: {e}")
             raise
 
-    def process_file(self, file_path, user_id, save_json=True):
+    def process_file(self, file_path, user_id, category, save_json=True):
         logger.info(f"Processing file: {file_path} for user: {user_id}")
-        # file_path = os.path.join('data/resumes/format_pdf', file_path)
         images = self.reader.read_image(file_path)
         if images is None:
             logger.error(f"Failed to load image from {file_path}")
@@ -92,16 +91,12 @@ class ResumeParser:
         logger.info(f"Generated JSON from resume text")
 
         if save_json:
-            self.save_json(file_name_no_suffix, json_output)
-            # processed_json = self.postprocessor.process(file_name_no_suffix, parsed_text, user_id)
-            # return processed_json
+            self.save_json(file_name_no_suffix, json_output, category)
 
         return json_output
     
-    def save_json(self, json_name: str, response_json):
+    def save_json(self, json_name: str, response_json, category: str):
         application_data_folder = os.getenv('PATH_RESUME_DATABASE')
-        # Extract the category (e.g., 'engineering') from the json_name
-        category = json_name.split('\\')[0] if '\\' in json_name else ''
         
         # Create the full path including category subfolder
         generated_json_folder = os.path.join(application_data_folder, 'format_json', category)
