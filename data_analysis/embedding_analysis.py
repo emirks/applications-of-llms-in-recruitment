@@ -3,8 +3,9 @@ import numpy as np
 from pathlib import Path
 from tqdm import tqdm
 from collections import defaultdict
-from sklearn.metrics.pairwise import cosine_similarity
+import faiss
 import logging
+from typing import Dict, List, Tuple
 
 logging.basicConfig(
     level=logging.INFO,
@@ -20,48 +21,99 @@ class EmbeddingAnalyzer:
     def __init__(self):
         self.field_embeddings = {}
         self.job_embeddings = {}
+        self.job_ids = []  # To maintain mapping between index and job ID
         self.resume_embeddings = defaultdict(dict)
-        
+        self.index = None
+        self.dimension = None
+    
     def load_embeddings(self, resume_base_dir: str, job_dir: str):
-        """Load all embeddings from the directories"""
+        """Load all embeddings and build FAISS index"""
         logger.info("Loading embeddings...")
         
-        # Load job embeddings
-        for file in tqdm(os.listdir(job_dir), desc="Loading job embeddings"):
-            if file.endswith('.npy'):
-                embedding_path = os.path.join(job_dir, file)
-                self.job_embeddings[file] = np.load(embedding_path)
+        # Validate directories
+        if not os.path.exists(resume_base_dir) or not os.path.exists(job_dir):
+            raise ValueError("Directory does not exist")
+        
+        # Load job embeddings first to determine dimension
+        job_files = [f for f in os.listdir(job_dir) if f.endswith('.npy')]
+        if not job_files:
+            raise ValueError(f"No embedding files found in job directory: {job_dir}")
+        
+        # Load all job embeddings first to ensure consistent dimensions
+        job_embeddings_list = []
+        for file in tqdm(job_files, desc="Loading job embeddings"):
+            embedding_path = os.path.join(job_dir, file)
+            try:
+                embedding = np.load(embedding_path)
+                # Ensure 1D array and normalize
+                embedding = embedding.flatten()  # Convert to 1D if needed
+                embedding = embedding / np.linalg.norm(embedding)
+                job_embeddings_list.append(embedding)
+                self.job_ids.append(file)
+            except Exception as e:
+                logger.error(f"Error loading job embedding {file}: {str(e)}")
+                continue
+        
+        if not job_embeddings_list:
+            raise ValueError("No valid job embeddings loaded")
+        
+        # Stack all embeddings and initialize FAISS index
+        job_embeddings_array = np.vstack(job_embeddings_list)
+        self.dimension = job_embeddings_array.shape[1]
+        logger.info(f"Embedding dimension: {self.dimension}")
+        
+        # Initialize FAISS index with correct dimension
+        self.index = faiss.IndexFlatIP(self.dimension)
+        self.index.add(job_embeddings_array)
         
         # Load resume embeddings by field
-        for field in os.listdir(resume_base_dir):
+        fields = [d for d in os.listdir(resume_base_dir) 
+                 if os.path.isdir(os.path.join(resume_base_dir, d))]
+        
+        for field in fields:
             field_path = os.path.join(resume_base_dir, field)
             if os.path.isdir(field_path):
                 logger.info(f"Loading embeddings for field: {field}")
-                for file in tqdm(os.listdir(field_path), desc=f"Loading {field} embeddings"):
-                    if file.endswith('.npy'):
-                        embedding_path = os.path.join(field_path, file)
-                        self.resume_embeddings[field][file] = np.load(embedding_path)
+                field_files = [f for f in os.listdir(field_path) if f.endswith('.npy')]
+                
+                field_vectors = []
+                for file in tqdm(field_files, desc=f"Loading {field} embeddings"):
+                    embedding_path = os.path.join(field_path, file)
+                    try:
+                        embedding = np.load(embedding_path)
+                        # Normalize for cosine similarity
+                        embedding = embedding / np.linalg.norm(embedding)
+                        self.resume_embeddings[field][file] = embedding
+                        field_vectors.append(embedding)
+                    except Exception as e:
+                        logger.error(f"Error loading resume embedding {file}: {str(e)}")
+                        continue
                 
                 # Calculate field embedding (average of all resumes in the field)
-                field_vectors = list(self.resume_embeddings[field].values())
-                self.field_embeddings[field] = np.mean(field_vectors, axis=0)
+                if field_vectors:
+                    field_embedding = np.mean(field_vectors, axis=0)
+                    # Normalize the mean vector
+                    self.field_embeddings[field] = field_embedding / np.linalg.norm(field_embedding)
+                else:
+                    logger.warning(f"No valid embeddings found for field: {field}")
+        
+        logger.info(f"Loaded {len(self.job_ids)} job embeddings")
+        logger.info(f"Loaded resume embeddings for {len(self.field_embeddings)} fields")
     
-    def find_matching_jobs(self, field: str, top_n: int = 10):
-        """Find top N matching jobs for a given field"""
-        field_embedding = self.field_embeddings[field]
+    def find_matching_jobs(self, field: str, top_n: int = 10) -> List[Tuple[str, float]]:
+        """Find top N matching jobs for a given field using FAISS"""
+        field_embedding = self.field_embeddings[field].reshape(1, -1)
         
-        # Calculate similarities
-        similarities = {}
-        for job_id, job_embedding in self.job_embeddings.items():
-            similarity = cosine_similarity(
-                field_embedding.reshape(1, -1),
-                job_embedding.reshape(1, -1)
-            )[0][0]
-            similarities[job_id] = similarity
+        # Perform similarity search
+        similarities, indices = self.index.search(field_embedding, top_n)
         
-        # Sort and get top N
-        sorted_jobs = sorted(similarities.items(), key=lambda x: x[1], reverse=True)
-        return sorted_jobs[:top_n]
+        # Convert to list of (job_id, similarity) tuples
+        matches = [
+            (self.job_ids[idx], float(sim))
+            for sim, idx in zip(similarities[0], indices[0])
+        ]
+        
+        return matches
     
     def analyze_field_job_matches(self, output_dir: str, top_n: int = 10):
         """Analyze matches between fields and jobs"""
@@ -96,20 +148,26 @@ class EmbeddingAnalyzer:
 
 def main():
     # Configure directories
-    resume_base_dir = "data/resume/format_embedding"
-    job_dir = "data/job_descriptions/b1ade_embedding"
-    output_dir = "data/analysis_results"
+    base_dir = "data/analysis_results/model_embedding"
+    models = ["b1ade", "sfr"]
     
-    # Initialize analyzer
-    analyzer = EmbeddingAnalyzer()
-    
-    # Load embeddings
-    analyzer.load_embeddings(resume_base_dir, job_dir)
-    
-    # Perform analysis
-    results = analyzer.analyze_field_job_matches(output_dir,top_n=1000)
-    
-    logger.info("Analysis completed!")
+    for model in models:
+        logger.info(f"Analyzing embeddings for {model} model")
+        
+        resume_base_dir = f"data/resume/{model}_embedding"
+        job_dir = f"data/job_descriptions/{model}_embedding"
+        output_dir = os.path.join(base_dir, model)
+        
+        # Initialize analyzer
+        analyzer = EmbeddingAnalyzer()
+        
+        # Load embeddings
+        analyzer.load_embeddings(resume_base_dir, job_dir)
+        
+        # Perform analysis
+        results = analyzer.analyze_field_job_matches(output_dir, top_n=1000)
+        
+        logger.info(f"Analysis completed for {model} model!")
 
 if __name__ == "__main__":
     main()
