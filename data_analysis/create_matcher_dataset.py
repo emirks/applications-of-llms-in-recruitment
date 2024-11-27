@@ -106,17 +106,29 @@ class MatcherDatasetCreator:
                 field_match_counts[field] = {}
             field_match_counts[field][match_type] = int(count)
         
+        # Get unique job sets for positive and negative matches
+        positive_jobs = set(df[df['is_match'] == 1]['job_id'])
+        negative_jobs = set(df[df['is_match'] == 0]['job_id'])
+        common_jobs = positive_jobs & negative_jobs
+        
         # Create and save dataset statistics
         stats = {
             'total_pairs': len(df),
-            'unique_jobs': df['job_id'].nunique(),
+            'unique_jobs': {
+                'total': df['job_id'].nunique(),
+                'positive_only': len(positive_jobs - negative_jobs),
+                'negative_only': len(negative_jobs - positive_jobs),
+                'common': len(common_jobs),
+                'all_positive': len(positive_jobs),
+                'all_negative': len(negative_jobs)
+            },
             'unique_fields': df['field'].nunique(),
             'positive_pairs': len(df[df['is_match'] == 1]),
             'negative_pairs': len(df[df['is_match'] == 0]),
             'avg_similarity_positive': float(df[df['is_match'] == 1]['similarity_score'].mean()),
             'avg_similarity_negative': float(df[df['is_match'] == 0]['similarity_score'].mean()),
             'fields_distribution': df['field'].value_counts().to_dict(),
-            'match_type_by_field': field_match_counts  # Using the converted format
+            'match_type_by_field': field_match_counts
         }
         
         stats_path = os.path.join(output_dir, f"{model_name}_dataset_stats.json")
@@ -125,6 +137,13 @@ class MatcherDatasetCreator:
         
         logger.info(f"Dataset saved to: {output_path}")
         logger.info(f"Statistics saved to: {stats_path}")
+        
+        # Log unique job statistics
+        logger.info("Unique jobs statistics:")
+        logger.info(f"Total unique jobs: {stats['unique_jobs']['total']}")
+        logger.info(f"Positive only: {stats['unique_jobs']['positive_only']}")
+        logger.info(f"Negative only: {stats['unique_jobs']['negative_only']}")
+        logger.info(f"Common (appear in both): {stats['unique_jobs']['common']}")
 
     def copy_job_texts(self, df: pd.DataFrame, model_name: str, output_dir: str) -> None:
         """Copy job description text files for the jobs in the dataset"""
