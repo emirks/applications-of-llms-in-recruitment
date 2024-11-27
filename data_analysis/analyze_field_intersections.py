@@ -23,8 +23,11 @@ class FieldIntersectionAnalyzer:
     def __init__(self, model_name: str):
         self.model_name = model_name
         self.raw_matches = defaultdict(list)
+        self.raw_negative_matches = defaultdict(list)
         self.field_jobs: Dict[str, Set[str]] = defaultdict(set)
+        self.field_negative_jobs: Dict[str, Set[str]] = defaultdict(set)
         self.intersection_counts: Dict[Tuple[str, str], int] = defaultdict(int)
+        self.negative_intersection_counts: Dict[Tuple[str, str], int] = defaultdict(int)
         self.job_similarity_scores: Dict[str, Dict[str, float]] = defaultdict(dict)
         
     def load_analysis_results(self, results_file: str):
@@ -33,19 +36,24 @@ class FieldIntersectionAnalyzer:
         with open(results_file, 'r') as f:
             data = json.load(f)
             
-        # Store raw matches first
+        # Store raw matches and negative matches
         for field, field_data in data.items():
             self.raw_matches[field] = sorted(
                 field_data['top_matches'],
                 key=lambda x: x['similarity_score'],
                 reverse=True
             )
+            self.raw_negative_matches[field] = sorted(
+                field_data['least_matches'],
+                key=lambda x: x['similarity_score']
+            )
         
         logger.info(f"Loaded raw data for {len(self.raw_matches)} fields")
     
     def filter_top_n_matches(self, n: int):
-        """Filter to only include top N matches for each field"""
+        """Filter to only include top N matches and bottom N matches for each field"""
         self.field_jobs.clear()
+        self.field_negative_jobs.clear()
         self.job_similarity_scores.clear()
         
         for field, matches in self.raw_matches.items():
@@ -53,6 +61,13 @@ class FieldIntersectionAnalyzer:
                 job_id = match['job_id']
                 similarity = match['similarity_score']
                 self.field_jobs[field].add(job_id)
+                self.job_similarity_scores[job_id][field] = similarity
+        
+        for field, matches in self.raw_negative_matches.items():
+            for match in matches[:n]:
+                job_id = match['job_id']
+                similarity = match['similarity_score']
+                self.field_negative_jobs[field].add(job_id)
                 self.job_similarity_scores[job_id][field] = similarity
     
     def analyze_intersections_for_n(self, n: int):
@@ -65,11 +80,12 @@ class FieldIntersectionAnalyzer:
         results = {}
         for n in range(start_n, min_n - 1, -step):
             logger.info(f"Analyzing top {n} matches")
-            intersection_matrix = self.analyze_intersections_for_n(n)
+            intersection_matrix, negative_intersection_matrix = self.analyze_intersections_for_n(n)
             cross_domain_jobs = self.find_cross_domain_jobs(min_fields=2)
             
             results[n] = {
                 'intersection_matrix': intersection_matrix,
+                'negative_intersection_matrix': negative_intersection_matrix,
                 'cross_domain_count': len(cross_domain_jobs),
                 'total_unique_jobs': len(set.union(*self.field_jobs.values()) if self.field_jobs else set())
             }
@@ -77,7 +93,7 @@ class FieldIntersectionAnalyzer:
         return results
     
     def visualize_threshold_results(self, results: Dict[int, dict], output_dir: str):
-        """Create visualizations for threshold analysis"""
+        """Create visualizations for threshold analysis including negative matches"""
         Path(output_dir).mkdir(parents=True, exist_ok=True)
         
         # Plot trends
@@ -98,6 +114,7 @@ class FieldIntersectionAnalyzer:
         
         # Create heatmaps for selected thresholds
         for n in thresholds:
+            # Positive matches heatmap
             plt.figure(figsize=(12, 10))
             sns.heatmap(
                 results[n]['intersection_matrix'],
@@ -106,9 +123,23 @@ class FieldIntersectionAnalyzer:
                 cmap='YlOrRd',
                 square=True
             )
-            plt.title(f'Field Intersections (Top {n} Matches)')
+            plt.title(f'Field Intersections - Positive Matches (Top {n})')
             plt.tight_layout()
-            plt.savefig(os.path.join(output_dir, f'intersections_top_{n}.png'))
+            plt.savefig(os.path.join(output_dir, f'intersections_positive_top_{n}.png'))
+            plt.close()
+            
+            # Negative matches heatmap
+            plt.figure(figsize=(12, 10))
+            sns.heatmap(
+                results[n]['negative_intersection_matrix'],
+                annot=True,
+                fmt='d',
+                cmap='YlOrRd',
+                square=True
+            )
+            plt.title(f'Field Intersections - Negative Matches (Bottom {n})')
+            plt.tight_layout()
+            plt.savefig(os.path.join(output_dir, f'intersections_negative_top_{n}.png'))
             plt.close()
     
     def generate_threshold_report(self, results: Dict[int, dict], output_dir: str):
@@ -142,11 +173,12 @@ class FieldIntersectionAnalyzer:
                 f.write(f"Maximum intersection size: {max_intersection:.0f}\n\n")
     
     def analyze_intersections(self):
-        """Analyze intersections between different fields"""
+        """Analyze intersections between different fields for both positive and negative matches"""
         fields = list(self.field_jobs.keys())
         intersection_matrix = pd.DataFrame(0, index=fields, columns=fields)
+        negative_intersection_matrix = pd.DataFrame(0, index=fields, columns=fields)
         
-        # Calculate intersections
+        # Calculate intersections for positive matches
         for i, field1 in enumerate(fields):
             for field2 in fields[i:]:
                 intersection = self.field_jobs[field1] & self.field_jobs[field2]
@@ -154,7 +186,15 @@ class FieldIntersectionAnalyzer:
                 intersection_matrix.loc[field1, field2] = len(intersection)
                 intersection_matrix.loc[field2, field1] = len(intersection)
         
-        return intersection_matrix
+        # Calculate intersections for negative matches
+        for i, field1 in enumerate(fields):
+            for field2 in fields[i:]:
+                intersection = self.field_negative_jobs[field1] & self.field_negative_jobs[field2]
+                self.negative_intersection_counts[(field1, field2)] = len(intersection)
+                negative_intersection_matrix.loc[field1, field2] = len(intersection)
+                negative_intersection_matrix.loc[field2, field1] = len(intersection)
+        
+        return intersection_matrix, negative_intersection_matrix
     
     def find_cross_domain_jobs(self, min_fields: int = 2) -> Dict[str, List[str]]:
         """Find jobs that appear in multiple fields"""
@@ -246,7 +286,8 @@ class FieldIntersectionAnalyzer:
             str(k): {
                 'cross_domain_count': v['cross_domain_count'],
                 'total_unique_jobs': v['total_unique_jobs'],
-                'intersection_matrix': v['intersection_matrix'].to_dict()
+                'intersection_matrix': v['intersection_matrix'].to_dict(),
+                'negative_intersection_matrix': v['negative_intersection_matrix'].to_dict()
             }
             for k, v in results.items()
         }
@@ -289,15 +330,14 @@ def main():
     # Configure paths
     base_dir = "data/analysis_results/model_embedding"
     
-    
     # Models to analyze
     models = ["b1ade", "sfr"]
     
     for model in models:
         logger.info(f"Analyzing results for {model} model")
-        results_file = os.path.join(base_dir, f"{model}/field_job_matches.json")
-        output_dir = os.path.join(base_dir, f"{model}/intersections")
-        Path(output_dir).mkdir(parents=True, exist_ok=True)
+        model_dir = os.path.join(base_dir, model)
+        results_file = os.path.join(model_dir, "field_job_matches.json")
+        output_dir = os.path.join(model_dir, "intersections")
         
         # Initialize analyzer for this model
         analyzer = FieldIntersectionAnalyzer(model)
@@ -305,8 +345,8 @@ def main():
         
         # Analyze multiple thresholds
         threshold_results = analyzer.analyze_multiple_thresholds(
-            start_n=1000,
-            step=100,
+            start_n=10000,
+            step=1000,
             min_n=100
         )
         
@@ -316,7 +356,7 @@ def main():
         logger.info(f"Completed analysis for {model} model")
     
     # Compare results across models
-    compare_model_results(output_dir, models)
+    compare_model_results(base_dir, models)
     
     logger.info("Analysis completed! Check the output directory for results.")
 

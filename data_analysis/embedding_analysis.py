@@ -100,31 +100,36 @@ class EmbeddingAnalyzer:
         logger.info(f"Loaded {len(self.job_ids)} job embeddings")
         logger.info(f"Loaded resume embeddings for {len(self.field_embeddings)} fields")
     
-    def find_matching_jobs(self, field: str, top_n: int = 10) -> List[Tuple[str, float]]:
-        """Find top N matching jobs for a given field using FAISS"""
+    def find_matching_jobs(self, field: str, top_n: int = 10, include_negative: bool = True) -> Tuple[List[Tuple[str, float]], List[Tuple[str, float]]]:
+        """Find top N matching and bottom N non-matching jobs for a given field using FAISS"""
         field_embedding = self.field_embeddings[field].reshape(1, -1)
         
-        # Perform similarity search
-        similarities, indices = self.index.search(field_embedding, top_n)
+        # Get all similarities to find both top and bottom matches
+        k = len(self.job_ids) if include_negative else top_n
+        similarities, indices = self.index.search(field_embedding, k)
         
         # Convert to list of (job_id, similarity) tuples
-        matches = [
+        all_matches = [
             (self.job_ids[idx], float(sim))
             for sim, idx in zip(similarities[0], indices[0])
         ]
         
-        return matches
+        # Split into positive and negative matches
+        positive_matches = all_matches[:top_n]
+        negative_matches = all_matches[-top_n:] if include_negative else []
+        
+        return positive_matches, negative_matches
     
     def analyze_field_job_matches(self, output_dir: str, top_n: int = 10):
-        """Analyze matches between fields and jobs"""
+        """Analyze matches between fields and jobs, including both positive and negative matches"""
         Path(output_dir).mkdir(parents=True, exist_ok=True)
         
         results = {}
         for field in self.field_embeddings.keys():
             logger.info(f"Analyzing matches for field: {field}")
             
-            # Get top matching jobs
-            matching_jobs = self.find_matching_jobs(field, top_n)
+            # Get top matching and least matching jobs
+            matching_jobs, negative_matches = self.find_matching_jobs(field, top_n)
             
             # Store results
             results[field] = {
@@ -134,6 +139,13 @@ class EmbeddingAnalyzer:
                         'similarity_score': float(score)
                     }
                     for job_id, score in matching_jobs
+                ],
+                'least_matches': [
+                    {
+                        'job_id': job_id.replace('.npy', ''),
+                        'similarity_score': float(score)
+                    }
+                    for job_id, score in negative_matches
                 ]
             }
         
@@ -165,7 +177,7 @@ def main():
         analyzer.load_embeddings(resume_base_dir, job_dir)
         
         # Perform analysis
-        results = analyzer.analyze_field_job_matches(output_dir, top_n=1000)
+        results = analyzer.analyze_field_job_matches(output_dir, top_n=10000)
         
         logger.info(f"Analysis completed for {model} model!")
 
