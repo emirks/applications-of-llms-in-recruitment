@@ -33,7 +33,7 @@ class BaseGenerator:
             return json_repair.loads(cv_content)
 
     def generate_json(self, text, client: FunctionCallingLLM):
-        formatted_prompt = prompt.format(json_format=json_format, cv_text=text)
+        formatted_prompt = prompt.format(json_format=json_format, text=text)
         messages = [
             ChatMessage(
                 role="user", 
@@ -58,36 +58,7 @@ class BaseGenerator:
         cv_content_json = self.parse_json(cv_content)
         return cv_content_json
     
-    def generate_json_w_parsed_json(self, resume_text, parsed_json_output, client: FunctionCallingLLM):
-        formatted_prompt = prompt_w_parsed_json.format(json_format_schema=json_format, resume_text=resume_text, parsed_json_output=parsed_json_output)
-        messages = [
-            ChatMessage(
-                role="user", 
-                content=formatted_prompt,
-            ),
-        ]
-        response: ChatResponse = client.chat(            
-            messages=messages,
-        )
-
-        try: 
-            print(client._get_model_name())
-            tokenizer = tiktoken.encoding_for_model(client._get_model_name())
-            print(f"LLM Prompt Tokens: {len(tokenizer.encode(formatted_prompt))}")
-            print(f"LLM Completion Tokens: {len(tokenizer.encode(response.message.content))}")
-            print(f"Total LLM Token Count: {self.token_counter.prompt_llm_token_count + self.token_counter.completion_llm_token_count}")
-        except Exception as error:
-            print("Tokenizer not found in client. Skipping token count calculation. Error: ", error)
-
-        cv_content = response.message.content
-        json_match = re.search(r'{[\s\S]*}', cv_content)
-        if json_match:
-            cv_json_str = json_match.group(0)
-            cv_content_json = self.parse_json(cv_json_str)
-            return cv_content_json            
-        else:
-            print("No JSON found in the text.")
-            return None
+    
     
     def improve_by_reiteration(self, text, client: FunctionCallingLLM):
         parsed_json = self.generate_json(text)
@@ -131,18 +102,6 @@ class BaseGenerator:
 json_format = StatementData.to_prompt()
 
 prompt = """
-Extract statements from the CV data in the given JSON format.
-For each section, extract relevant information and format according to the schema.
-If information is not available, use null or empty values.
-
-Json format: 
-{json_format}
-
-CV text:
-{cv_text}
-"""
-
-prompt_w_parsed_json = """
 Review the provided job description and extract key statements according to the following format:
 
 1. Job Information:
@@ -177,12 +136,9 @@ Review the provided job description and extract key statements according to the 
 - Include any other relevant requirements or preferences
 - Add benefits, perks, or company culture information if mentioned
 
-JSON Format Schema:
-{json_format_schema}
-
 Job Description Text:
-{resume_text}
+{text}
 
-Current Parsed JSON:
-{parsed_json_output}
+Format the output as a JSON object with the following structure:
+{json_format}
 """
