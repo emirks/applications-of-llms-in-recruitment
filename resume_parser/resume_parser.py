@@ -12,7 +12,7 @@ from resume_parser.generators import BaseGenerator
 from resume_parser.parsers import BaseParser
 from postprocess.postprocess import ResumeJsonPostProcess
 from dotenv import load_dotenv
-load_dotenv()
+load_dotenv(override=True)
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
