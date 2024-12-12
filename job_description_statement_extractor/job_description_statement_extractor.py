@@ -17,7 +17,7 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-DEFAULT_PIPELINE_NAME = "textparser_gemini"
+DEFAULT_PIPELINE_NAME = "textparser_gpt4o"
 
 class StatementExtractor:
     def __init__(self, pipeline_name=DEFAULT_PIPELINE_NAME):
@@ -68,27 +68,18 @@ class StatementExtractor:
             logger.error(f"Failed to create models from pipeline configuration: {e}")
             raise
 
-    def extract_statements(self, file_path: str, parsed_json: Dict[str, Any] = None) -> Dict[str, Any]:
-        if parsed_json:
-            logger.info("Processing from parsed JSON")
-            statements = self.generator.generate_json_w_parsed_json(
-                resume_text="",  # Empty since we're using parsed JSON
-                parsed_json_output=json.dumps(parsed_json),
-                client=self.generator.client
-            )
-            logger.info("Generated statements from parsed JSON")
-        else:
-            logger.info(f"Processing file: {file_path}")
-            images = self.reader.read_image(file_path)
-            if images is None:
-                logger.error(f"Failed to load image from {file_path}")
-                return None
+    def extract_statements(self, file_path: str) -> Dict[str, Any]:
+        logger.info(f"Processing file: {file_path}")
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                job_description_text = f.read()
+        except Exception as e:
+            logger.error(f"Failed to read text file {file_path}: {str(e)}")
+            return None
 
-            parsed_text = self.parser.parse_text(file_path, images)
-            logger.info(f"Parsed text successfully from {file_path}")
 
-            statements = self.generator.generate_json(parsed_text)
-            logger.info(f"Generated statements from text")
+        statements = self.generator.generate_json(job_description_text)
+        logger.info(f"Generated statements from text")
         
         return StatementData(**statements).dict()
 
