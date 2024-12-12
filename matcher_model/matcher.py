@@ -25,9 +25,7 @@ class Matcher:
                 }
                 
                 # Match must-have requirements
-                for req in tqdm(job_description['must_have_requirements'], 
-                              desc=f"Must-have reqs for {resume['id']}", 
-                              leave=False):
+                for req in job_description['must_have_requirements']:
                     matched_statements = self.statement_processor.find_matching_statements(
                         req,
                         resume['statements']
@@ -38,9 +36,7 @@ class Matcher:
                     })
                     
                 # Match nice-to-have requirements
-                for req in tqdm(job_description['nice_to_have_requirements'], 
-                              desc=f"Nice-to-have reqs for {resume['id']}", 
-                              leave=False):
+                for req in job_description['nice_to_have_requirements']:
                     matched_statements = self.statement_processor.find_matching_statements(
                         req,
                         resume['statements']

@@ -2,6 +2,7 @@ from matcher_model.matcher import Matcher
 from matcher_model.utils.resume_loader import load_resume_statements
 from matcher_model.models.data_models import JobRequirement
 from matcher_model.utils.logger import setup_logger
+from matcher_model.utils.result_saver import save_matching_results
 
 if __name__ == "__main__":
     # Setup logging
@@ -48,12 +49,10 @@ if __name__ == "__main__":
     matches = matcher.match(job_description, resumes)
     logger.info(f"Found {len(matches)} matching resumes")
     
-    # Print results
-    for match in matches:
-        logger.info(f"\nResume {match['id']}: {match['score']:.2%} match")
-        for req_type in ['must_have', 'nice_to_have']:
-            logger.info(f"\n{req_type.upper()} Requirements:")
-            for req_match in match['requirement_matches'][req_type]:
-                logger.info(f"- {req_match['requirement'].text}")
-                for stmt in req_match['matches'].matched_statements[:3]:
-                    logger.info(f"  * {stmt['text']} (score: {stmt['score']:.2f})") 
+    # Save results
+    json_path, txt_path = save_matching_results(matches, job_description)
+    
+    # Print summary to console
+    logger.info("\nTop 5 Matches:")
+    for match in matches[:5]:
+        logger.info(f"Resume {match['id']}: {match['score']:.2%} match ({match['category']})")

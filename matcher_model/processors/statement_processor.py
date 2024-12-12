@@ -53,6 +53,14 @@ class StatementProcessor:
         logger.debug(f"Finding matches for requirement: {requirement.text}")
         
         statements = self.prepare_statements(resume_statements)
+        if not statements:
+            logger.debug("No statements found in resume")
+            return MatchResult(
+                requirement=requirement,
+                matched_statements=[],
+                score=0.0
+            )
+        
         statement_texts = [s['text'] for s in statements]
         
         # Batch process embeddings
@@ -62,8 +70,17 @@ class StatementProcessor:
         all_embeddings = []
         for i in range(0, len(statement_texts), self.batch_size):
             batch = statement_texts[i:i + self.batch_size]
-            embeddings = self.bi_encoder.encode(batch)
-            all_embeddings.append(embeddings)
+            if batch:  # Only process non-empty batches
+                embeddings = self.bi_encoder.encode(batch)
+                all_embeddings.append(embeddings)
+        
+        if not all_embeddings:
+            logger.debug("No embeddings generated")
+            return MatchResult(
+                requirement=requirement,
+                matched_statements=[],
+                score=0.0
+            )
         
         statement_embeddings = np.vstack(all_embeddings)
         
@@ -78,8 +95,9 @@ class StatementProcessor:
         
         for i in range(0, len(pairs), self.batch_size):
             batch = pairs[i:i + self.batch_size]
-            batch_scores = self.cross_encoder.predict(batch)
-            scores.extend(batch_scores if isinstance(batch_scores, list) else [batch_scores])
+            if batch:  # Only process non-empty batches
+                batch_scores = self.cross_encoder.predict(batch)
+                scores.extend(batch_scores if isinstance(batch_scores, list) else [batch_scores])
         
         scored_statements = [
             {**statements[idx], 'score': float(score)}
