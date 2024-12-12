@@ -17,7 +17,7 @@ from ai_systems.utils.exceptions import (
 from typing import List
 from datetime import datetime, timedelta
 
-load_dotenv()
+load_dotenv(override=True)
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

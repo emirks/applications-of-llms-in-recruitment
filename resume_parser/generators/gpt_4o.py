@@ -5,12 +5,12 @@ import os
 from dotenv import load_dotenv
 
 load_dotenv(override=True)
-api_key = os.getenv('DEV_OPENAI_API_KEY')
+api_key = os.getenv('OPENAI_API_KEY')
 
 os.environ['OPENAI_API_KEY'] = api_key
 print(api_key)
 
-client = OpenAI(model="gpt-4o", max_tokens=2000)
+client = OpenAI(model="gpt-4o-mini", max_tokens=2000)
 
 class GPT4oGenerator(BaseGenerator):
     def generate_json(self, text):
