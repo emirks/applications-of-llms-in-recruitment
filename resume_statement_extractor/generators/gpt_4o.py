@@ -4,11 +4,11 @@ import os
 from dotenv import load_dotenv
 
 load_dotenv(override=True)
-api_key = os.getenv('DEV_OPENAI_API_KEY')
+api_key = os.getenv('OPENAI_API_KEY')
 
 os.environ['OPENAI_API_KEY'] = api_key
 
-client = OpenAI(model="gpt-4", api_key=os.environ.get("OPENAI_API_KEY"))
+client = OpenAI(model="gpt-4o-mini", api_key=os.environ.get("OPENAI_API_KEY"))
 
 class GPT4oGenerator(BaseGenerator):
     def __init__(self):
