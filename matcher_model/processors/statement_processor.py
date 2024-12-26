@@ -4,6 +4,9 @@ import torch
 import numpy as np
 from ..models.data_models import ResumeStatements, JobRequirement, MatchResult
 from ..models.encoders import BiEncoder, CrossEncoder
+from ..models.vector_store.vector_db import VectorDB
+import os
+from collections import defaultdict
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +19,56 @@ class StatementProcessor:
         self.bi_encoder = BiEncoder(config['models']['bi_encoder'])
         self.cross_encoder = CrossEncoder(config['models']['cross_encoder'])
         self.batch_size = config.get('batch_size', 32)
-    
+        
+        # Cache for resume statement embeddings
+        self.statement_cache = {}
+        self.vector_store_path = config.get('vector_store', {}).get('path', 'data/vector_store')
+        self.vector_store_type = config.get('vector_store', {}).get('index_type', 'IP')
+        self.vector_db = None
+
+    def initialize_vector_store(self, statements_data: List[Dict]):
+        """Initialize or load vector store"""
+        os.makedirs(os.path.dirname(self.vector_store_path), exist_ok=True)
+        
+        if os.path.exists(f"{self.vector_store_path}.index"):
+            logger.info("Loading existing vector store")
+            self.vector_db = VectorDB.load(self.vector_store_path)
+            logger.info(f"Loaded vector store with {len(self.vector_db.metadata)} entries")
+            return
+        
+        logger.info("Creating new vector store")
+        # Get dimension from bi-encoder
+        sample_embedding = self.bi_encoder.encode("sample text")
+        self.vector_db = VectorDB(
+            dimension=len(sample_embedding),
+            index_type=self.vector_store_type
+        )
+        
+        # Process all statements in batches
+        logger.info(f"Processing {len(statements_data)} statements in batches of {self.batch_size}")
+        all_embeddings = []
+        all_metadata = []
+        
+        for i in range(0, len(statements_data), self.batch_size):
+            batch = statements_data[i:i + self.batch_size]
+            texts = [s['text'] for s in batch]
+            embeddings = self.bi_encoder.encode(texts)
+            all_embeddings.append(embeddings)
+            all_metadata.extend(batch)
+            
+            if (i + 1) % (self.batch_size * 10) == 0:
+                logger.info(f"Processed {i + 1}/{len(statements_data)} statements")
+        
+        # Combine all embeddings and add to vector store
+        combined_embeddings = np.vstack(all_embeddings)
+        self.vector_db.add(combined_embeddings, all_metadata)
+        
+        logger.info(f"Added {len(all_metadata)} entries to vector store")
+        
+        # Save vector store
+        logger.info("Saving vector store")
+        self.vector_db.save(self.vector_store_path)
+
     def prepare_statements(self, resume_statements: ResumeStatements) -> List[Dict[str, Any]]:
         """Convert resume statements into searchable format"""
         statements = []
@@ -48,66 +100,63 @@ class StatementProcessor:
         logger.debug(f"Prepared {len(statements)} statements")
         return statements
 
-    def find_matching_statements(self, requirement: JobRequirement, resume_statements: ResumeStatements) -> MatchResult:
-        """Find statements matching a job requirement"""
-        logger.debug(f"Finding matches for requirement: {requirement.text}")
+    def batch_find_matching_statements(self, requirements: List[JobRequirement], resume_statements: List[Dict]) -> Dict[str, List[MatchResult]]:
+        """Batch process multiple requirements against multiple resumes"""
+        # Encode all requirements at once
+        req_texts = [req.text for req in requirements]
+        req_embeddings = self.bi_encoder.encode(req_texts)
         
-        statements = self.prepare_statements(resume_statements)
-        if not statements:
-            logger.debug("No statements found in resume")
-            return MatchResult(
-                requirement=requirement,
-                matched_statements=[],
-                score=0.0
+        # Use vector store for initial retrieval for all requirements
+        all_distances = []
+        all_indices = []
+        for req_emb in req_embeddings:
+            distances, indices = self.vector_db.search(
+                req_emb.reshape(1, -1),
+                k=self.config['search']['top_k_statements']
             )
+            all_distances.append(distances[0])
+            all_indices.append(indices[0])
         
-        statement_texts = [s['text'] for s in statements]
+        # Prepare cross-encoder pairs for all requirements
+        all_pairs = []
+        pair_mapping = defaultdict(list)  # Maps pair index to (req_idx, stmt_idx)
+        current_pair_idx = 0
         
-        # Batch process embeddings
-        req_embedding = self.bi_encoder.encode(requirement.text)
+        for req_idx, (req, indices) in enumerate(zip(requirements, all_indices)):
+            candidate_statements = self.vector_db.get_metadata(indices)
+            for stmt_idx, stmt in enumerate(candidate_statements):
+                all_pairs.append([req.text, stmt['text']])
+                pair_mapping[current_pair_idx] = (req_idx, stmt_idx)
+                current_pair_idx += 1
         
-        # Process statement embeddings in batches
-        all_embeddings = []
-        for i in range(0, len(statement_texts), self.batch_size):
-            batch = statement_texts[i:i + self.batch_size]
-            if batch:  # Only process non-empty batches
-                embeddings = self.bi_encoder.encode(batch)
-                all_embeddings.append(embeddings)
-        
-        if not all_embeddings:
-            logger.debug("No embeddings generated")
-            return MatchResult(
-                requirement=requirement,
-                matched_statements=[],
-                score=0.0
-            )
-        
-        statement_embeddings = np.vstack(all_embeddings)
-        
-        # Get top-k matches
-        similarities = statement_embeddings @ req_embedding.T
-        top_k = min(self.config['search']['top_k_statements'], len(statements))
-        top_indices = similarities.argsort()[-top_k:][::-1]
-        
-        # Rerank using cross-encoder in batches
-        pairs = [[requirement.text, statement_texts[idx]] for idx in top_indices]
-        scores = []
-        
-        for i in range(0, len(pairs), self.batch_size):
-            batch = pairs[i:i + self.batch_size]
-            if batch:  # Only process non-empty batches
+        # Batch process with cross-encoder
+        all_scores = []
+        for i in range(0, len(all_pairs), self.batch_size):
+            batch = all_pairs[i:i + self.batch_size]
+            if batch:
                 batch_scores = self.cross_encoder.predict(batch)
-                scores.extend(batch_scores if isinstance(batch_scores, list) else [batch_scores])
+                all_scores.extend(batch_scores if isinstance(batch_scores, list) else [batch_scores])
         
-        scored_statements = [
-            {**statements[idx], 'score': float(score)}
-            for idx, score in zip(top_indices, scores)
-        ]
+        # Organize results
+        results = defaultdict(list)
+        for pair_idx, score in enumerate(all_scores):
+            req_idx, stmt_idx = pair_mapping[pair_idx]
+            req = requirements[req_idx]
+            stmt = self.vector_db.get_metadata(all_indices[req_idx])[stmt_idx]
+            
+            if req.text not in results:
+                results[req.text] = []
+            results[req.text].append({**stmt, 'score': float(score)})
         
-        scored_statements.sort(key=lambda x: x['score'], reverse=True)
+        # Create MatchResults
+        final_results = {}
+        for req in requirements:
+            matched_statements = results.get(req.text, [])
+            matched_statements.sort(key=lambda x: x['score'], reverse=True)
+            final_results[req.text] = MatchResult(
+                requirement=req,
+                matched_statements=matched_statements,
+                score=max([s['score'] for s in matched_statements], default=0.0)
+            )
         
-        return MatchResult(
-            requirement=requirement,
-            matched_statements=scored_statements,
-            score=max([s['score'] for s in scored_statements], default=0.0)
-        )
+        return final_results
