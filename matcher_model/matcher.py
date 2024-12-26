@@ -13,39 +13,35 @@ class Matcher:
     
     def match(self, job_description: Dict, resumes: List[Dict]) -> List[Dict]:
         """Main matching process"""
-        # Process each requirement type separately
         resume_matches = {}
+        
+        # Get all requirements
+        all_requirements = (
+            [(req, 'must_have') for req in job_description['must_have_requirements']] +
+            [(req, 'nice_to_have') for req in job_description['nice_to_have_requirements']]
+        )
         
         # Create progress bar for resumes
         with tqdm(total=len(resumes), desc="Processing resumes", unit="resume") as pbar:
             for resume in resumes:
+                # Batch process all requirements for this resume
+                batch_results = self.statement_processor.batch_find_matching_statements(
+                    [req for req, _ in all_requirements],
+                    resume['statements']
+                )
+                
+                # Organize results
                 matches = {
                     'must_have': [],
                     'nice_to_have': []
                 }
                 
-                # Match must-have requirements
-                for req in job_description['must_have_requirements']:
-                    matched_statements = self.statement_processor.find_matching_statements(
-                        req,
-                        resume['statements']
-                    )
-                    matches['must_have'].append({
+                for req, req_type in all_requirements:
+                    matches[req_type].append({
                         'requirement': req,
-                        'matches': matched_statements
+                        'matches': batch_results[req.text]
                     })
-                    
-                # Match nice-to-have requirements
-                for req in job_description['nice_to_have_requirements']:
-                    matched_statements = self.statement_processor.find_matching_statements(
-                        req,
-                        resume['statements']
-                    )
-                    matches['nice_to_have'].append({
-                        'requirement': req,
-                        'matches': matched_statements
-                    })
-                    
+                
                 resume_matches[resume['id']] = matches
                 pbar.update(1)
         
@@ -56,18 +52,7 @@ class Matcher:
             resume_matches
         )
         
-        # Prepare final results
-        ranked_resumes = []
-        for resume_id, score in sorted(resume_scores.items(), key=lambda x: x[1], reverse=True):
-            resume_data = next(r for r in resumes if r['id'] == resume_id)
-            ranked_resumes.append({
-                'id': resume_id,
-                'score': score,
-                'category': resume_data['category'],
-                'requirement_matches': resume_matches[resume_id]
-            })
-            
-        return ranked_resumes[:self.config['search']['top_n_resumes']]
+        return self._prepare_ranked_results(resume_scores, resume_matches, resumes)
 
     def _get_default_config(self) -> Dict:
         return {
