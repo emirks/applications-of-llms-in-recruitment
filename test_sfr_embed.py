@@ -1,4 +1,4 @@
-from embeddings.sfr_embed_endpoint import SFREmbeddingEndpoint
+from embeddings.embedding_models.sfr_embed_endpoint import SFREmbeddingEndpoint
 import logging
 import numpy as np
 
