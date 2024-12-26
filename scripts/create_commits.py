@@ -4,8 +4,6 @@ from typing import List, Dict, Tuple
 import subprocess
 import logging
 import shutil
-import time
-from tenacity import retry, wait_exponential, stop_after_attempt
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +14,17 @@ class CommitGenerator:
         self.git_exe = self._find_git_executable()
         if not self.git_exe:
             raise RuntimeError("Git executable not found. Please ensure Git is installed and accessible.")
+        
+        # Add ignore patterns
+        self.ignore_patterns = [
+            'data/analysis_results/',  # Ignore analysis results directory
+            '.zip',                    # Ignore zip files
+            '.pyc',                    # Ignore compiled Python files
+            '__pycache__/',           # Ignore Python cache directories
+            '.git/',                   # Ignore git directory
+            '.index',
+            '.metadata',
+        ]
     
     def _find_git_executable(self) -> str:
         """Find the Git executable path"""
@@ -37,6 +46,13 @@ class CommitGenerator:
                 
         return None
     
+    def _should_ignore(self, file_path: str) -> bool:
+        """Check if file should be ignored"""
+        for pattern in self.ignore_patterns:
+            if pattern in file_path:
+                return True
+        return False
+    
     def get_modified_files(self) -> List[str]:
         """Get list of modified files in the repository"""
         try:
@@ -48,19 +64,15 @@ class CommitGenerator:
                 check=True
             )
             
-            # Parse the status output
+            # Parse the status output and filter ignored files
             modified_files = []
             for line in result.stdout.splitlines():
                 status = line[:2]
                 file_path = line[3:].strip()
                 
-                # Skip directories themselves but include their contents
-                if os.path.isdir(file_path):
-                    # For untracked directories, walk through them to find all files
-                    if status == '??':
-                        # Check if this is a new directory with multiple new files
-                        # If so, we'll commit the whole directory at once
-                        modified_files.append(file_path)
+                # Skip ignored files
+                if self._should_ignore(file_path):
+                    logger.info(f"Ignoring file: {file_path}")
                     continue
                 
                 # M: modified
@@ -71,11 +83,9 @@ class CommitGenerator:
                     # For renamed files, get the new name
                     if status == 'R ':
                         file_path = file_path.split(' -> ')[1]
-                    # Don't add files that are inside an untracked directory
-                    if not any(file_path.startswith(d) for d in modified_files if os.path.isdir(d)):
-                        modified_files.append(file_path)
+                    modified_files.append(file_path)
             
-            logger.info(f"Found {len(modified_files)} modified files/directories")
+            logger.info(f"Found {len(modified_files)} modified files (after filtering)")
             return modified_files
             
         except subprocess.CalledProcessError as e:
@@ -85,28 +95,10 @@ class CommitGenerator:
     def get_file_diff(self, file_path: str) -> str:
         """Get git diff for a specific file"""
         try:
-            # If it's a directory, list its contents
-            if os.path.isdir(file_path):
-                files_list = []
-                for root, _, files in os.walk(file_path):
-                    for file in files:
-                        if not self._is_binary_file(os.path.join(root, file)):
-                            files_list.append(os.path.relpath(os.path.join(root, file), file_path))
-                return f"New directory: {file_path}\n\nContaining files:\n" + "\n".join(files_list)
-            
-            # Skip if file is binary
-            if self._is_binary_file(file_path):
-                logger.info(f"Skipping binary file: {file_path}")
-                return ""
-            
             # For untracked files, show the entire content
             if not self._is_tracked(file_path):
-                try:
-                    with open(file_path, 'r', encoding='utf-8') as f:
-                        return f"New file: {file_path}\n\n" + f.read()
-                except UnicodeDecodeError:
-                    logger.info(f"Skipping non-text file: {file_path}")
-                    return ""
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    return f"New file: {file_path}\n\n" + f.read()
             
             result = subprocess.run(
                 [self.git_exe, 'diff', file_path],
@@ -115,7 +107,7 @@ class CommitGenerator:
                 check=True
             )
             return result.stdout
-        except (subprocess.CalledProcessError, UnicodeDecodeError, PermissionError) as e:
+        except subprocess.CalledProcessError as e:
             logger.error(f"Error getting diff for {file_path}: {e}")
             return ""
     
@@ -131,27 +123,8 @@ class CommitGenerator:
         except subprocess.CalledProcessError:
             return False
 
-    def _is_binary_file(self, file_path: str) -> bool:
-        """Check if a file is binary"""
-        try:
-            # Skip certain file extensions known to be binary
-            binary_extensions = {'.zip', '.index', '.metadata', '.pyc', '.pyo', '.pyd', 
-                               '.so', '.dll', '.exe', '.bin', '.dat', '.db', '.sqlite'}
-            if os.path.splitext(file_path)[1].lower() in binary_extensions:
-                return True
-            
-            # Check content for binary data
-            with open(file_path, 'rb') as f:
-                chunk = f.read(1024)
-                return b'\0' in chunk
-        except Exception as e:
-            logger.error(f"Error checking if file is binary: {e}")
-            return True  # Assume binary if we can't read the file
-
-    @retry(wait=wait_exponential(multiplier=1, min=4, max=10),
-           stop=stop_after_attempt(3))
     def generate_commit_message(self, diff: str) -> str:
-        """Generate commit message using GPT-4-mini with retry logic"""
+        """Generate commit message using GPT-4-mini"""
         prompt = """
         Given the following git diff, write a concise and descriptive commit message.
         Follow these rules:
@@ -168,8 +141,6 @@ class CommitGenerator:
         
         try:
             message = self.gpt4o.generate_with_prompt(prompt, "")
-            # Add delay between API calls
-            time.sleep(1)  # Wait 1 second between calls
             return message.strip()
         except Exception as e:
             logger.error(f"Error generating commit message: {e}")
@@ -187,42 +158,30 @@ class CommitGenerator:
         print("\nProposed commits:")
         print("=" * 50)
         
-        for i, file_path in enumerate(modified_files):
+        for file_path in modified_files:
             # Get diff for the file
             diff = self.get_file_diff(file_path)
             if not diff:
                 logger.warning(f"No changes detected for {file_path}")
                 continue
             
-            # Generate commit message with progress indicator
-            print(f"\nProcessing file {i+1}/{len(modified_files)}: {file_path}")
+            # Generate commit message
             commit_message = self.generate_commit_message(diff)
             proposals.append((file_path, commit_message))
             
             # Display proposal
+            print(f"\nFile: {file_path}")
             print(f"Commit message: {commit_message}")
             print("-" * 50)
-            
-            # Add delay between files
-            if i < len(modified_files) - 1:  # Don't wait after the last file
-                time.sleep(2)  # Wait 2 seconds between files
         
         return proposals
 
     def create_atomic_commits(self, proposals: List[Tuple[str, str]]):
-        """Create atomic commits for each modified file/directory"""
+        """Create atomic commits for each modified file"""
         for file_path, commit_message in proposals:
             try:
-                # If it's a directory, add all its contents
-                if os.path.isdir(file_path):
-                    for root, _, files in os.walk(file_path):
-                        for file in files:
-                            full_path = os.path.join(root, file)
-                            if not self._is_binary_file(full_path):
-                                subprocess.run([self.git_exe, 'add', full_path], check=True)
-                else:
-                    # Stage the file
-                    subprocess.run([self.git_exe, 'add', file_path], check=True)
+                # Stage the file
+                subprocess.run([self.git_exe, 'add', file_path], check=True)
                 
                 # Create commit
                 subprocess.run(
@@ -258,4 +217,4 @@ if __name__ == "__main__":
         commit_gen.create_atomic_commits(proposals)
         print("Done!")
     else:
-        print("Aborted. No commits were created.") 
+        print("Aborted. No commits were created.")
