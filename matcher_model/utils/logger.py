@@ -4,8 +4,12 @@ from typing import Optional
 
 def setup_logger(name: str, level: str = "INFO", log_file: Optional[str] = None) -> logging.Logger:
     """Configure and return a logger instance"""
-    logger = logging.getLogger(name)
+    # Get the root logger for the package
+    logger = logging.getLogger(name.split('.')[0])
     logger.setLevel(getattr(logging, level.upper()))
+    
+    # Remove any existing handlers to avoid duplicates
+    logger.handlers.clear()
     
     # Create formatters
     console_formatter = logging.Formatter(
@@ -28,4 +32,7 @@ def setup_logger(name: str, level: str = "INFO", log_file: Optional[str] = None)
         file_handler.setFormatter(file_formatter)
         logger.addHandler(file_handler)
     
-    return logger 
+    # Ensure all child loggers propagate
+    logger.propagate = True
+    
+    return logger

@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import List, Dict
 import logging
 from ..models.data_models import JobRequirement, MatchResult
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
