@@ -6,9 +6,13 @@ from matcher_model.utils.result_saver import save_matching_results
 import json
 from pathlib import Path
 
+# Load the real job description from JSON file
+JOB_DESCRIPTION_PATH = "matcher_dataset/job_descriptions/statements/format_json/63ca7a693a2fb6111a882eb4.json"
+
+
 if __name__ == "__main__":
     # Setup logging
-    logger = setup_logger("matcher", level="INFO", log_file="matcher.log")
+    logger = setup_logger("matcher_model", level="INFO", log_file="matcher.log")
     
     # Initialize matcher
     logger.info("Initializing matcher")
@@ -37,17 +41,24 @@ if __name__ == "__main__":
     logger.info("Initializing vector store")
     all_statements = []
     for resume in resumes:
-        statements = matcher.statement_processor.prepare_statements(resume['statements'])
+        statements = matcher.statement_processor.prepare_statements(
+            resume['statements'],
+            resume_id=resume['id']
+        )
         all_statements.extend(statements)
     
     logger.info(f"Prepared {len(all_statements)} statements for vector store")
-    matcher.statement_processor.initialize_vector_store(all_statements)
+    # After preparing statements
+    logger.info(f"Sample of prepared statements:")
+    for stmt in all_statements[:5]:
+        logger.info(f"Resume ID: {stmt['resume_id']}, Text: {stmt['text'][:100]}")
+
+    # Force recreation of vector store
+    matcher.statement_processor.initialize_vector_store(all_statements, force_recreate=False)
     
-    # Load the real job description from JSON file
-    job_json_path = "matcher_dataset/job_descriptions/statements/format_json/63ca5bad3a2fb6111a880f6a.json"
-    logger.info(f"Loading job description from {job_json_path}")
+        logger.info(f"Loading job description from {JOB_DESCRIPTION_PATH}")
     
-    with open(job_json_path, 'r', encoding='utf-8') as f:
+    with open(JOB_DESCRIPTION_PATH, 'r', encoding='utf-8') as f:
         job_data = json.load(f)
     
     # Convert JSON data to JobRequirement objects with appropriate categories
@@ -98,7 +109,7 @@ if __name__ == "__main__":
     
     # Run matching
     logger.info("Starting matching process")
-    matches = matcher.match(job_description, resumes)
+    matches = matcher.match_new(job_description, resumes)
     logger.info(f"Found {len(matches)} matching resumes")
     
     # Save results
@@ -107,4 +118,6 @@ if __name__ == "__main__":
     # Print summary to console
     logger.info("\nTop 5 Matches:")
     for match in matches[:5]:
-        logger.info(f"Resume {match['id']}: {match['score']:.2%} match ({match['category']})")
+        logger.info(f"Resume matcher_dataset/resume/statements/format_json/{match['id']}: {match['score']:.2%} match ({match['category']})")
+    
+    
