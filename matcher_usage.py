@@ -5,9 +5,32 @@ from matcher_model.utils.logger import setup_logger
 from matcher_model.utils.result_saver import save_matching_results
 import json
 from pathlib import Path
+from tabulate import tabulate
 
 # Load the real job description from JSON file
 JOB_DESCRIPTION_PATH = "matcher_dataset/job_descriptions/statements/format_json/63ca7a693a2fb6111a882eb4.json"
+
+matcher_config = {
+    'models': {
+        'bi_encoder': {
+            'model_name': 'sentence-transformers/all-MiniLM-L6-v2'
+        },
+        'cross_encoder': {
+            'model_name': 'cross-encoder/ms-marco-MiniLM-L-6-v2'
+        }
+    },
+    'search': {
+        'top_k_statements': 1000,
+        'top_n_resumes': 20
+    },
+    'weights': {
+        'must_have': 0.7,
+        'nice_to_have': 0.3
+    },
+    'normalization': {
+        'factor': 10.0  # Adjust this based on your typical score ranges
+    }
+}
 
 
 if __name__ == "__main__":
@@ -16,7 +39,7 @@ if __name__ == "__main__":
     
     # Initialize matcher
     logger.info("Initializing matcher")
-    matcher = Matcher()
+    matcher = Matcher(matcher_config)
     
     # Load resumes from the directory structure
     base_path = "matcher_dataset/resume"
@@ -56,7 +79,7 @@ if __name__ == "__main__":
     # Force recreation of vector store
     matcher.statement_processor.initialize_vector_store(all_statements, force_recreate=False)
     
-        logger.info(f"Loading job description from {JOB_DESCRIPTION_PATH}")
+    logger.info(f"Loading job description from {JOB_DESCRIPTION_PATH}")
     
     with open(JOB_DESCRIPTION_PATH, 'r', encoding='utf-8') as f:
         job_data = json.load(f)
@@ -116,8 +139,31 @@ if __name__ == "__main__":
     json_path, txt_path = save_matching_results(matches, job_description)
     
     # Print summary to console
-    logger.info("\nTop 5 Matches:")
-    for match in matches[:5]:
-        logger.info(f"Resume matcher_dataset/resume/statements/format_json/{match['id']}: {match['score']:.2%} match ({match['category']})")
+    logger.info(f"\nTop {len(matches)} Matches:")
+
+    # Prepare table data
+    headers = ["Resume ID", "Score", "Category", "JD Must-Have Coverage", "JD Nice-to-Have Coverage", "Resume Statement Coverage"]
+    table_data = []
+
+    for match in matches:
+        resume_id = match['id'].split('/')[-1]  # Get just the filename
+        table_data.append([
+            resume_id,
+            f"{match['score']:.2%}",
+            match['category'].replace('_', ' ').title(),
+            f"{match['must_have_coverage']:.2%}",
+            f"{match['nice_to_have_coverage']:.2%}",
+            f"{match['statement_coverage']:.2%}"
+        ])
+
+    # Print table
+    table = tabulate(
+        table_data,
+        headers=headers,
+        tablefmt="grid",
+        numalign="right",
+        stralign="left"
+    )
+    logger.info(f"\n{table}")
     
     

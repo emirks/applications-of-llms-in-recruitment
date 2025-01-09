@@ -49,7 +49,8 @@ class Matcher:
         logger.info("Calculating final scores")
         resume_scores = self.score_processor.aggregate_resume_scores(
             job_description,
-            resume_matches
+            resume_matches,
+            resumes
         )
         
         return self._prepare_ranked_results(resume_scores, resume_matches, resumes)
@@ -87,7 +88,8 @@ class Matcher:
         # Calculate scores and rank
         resume_scores = self.score_processor.aggregate_resume_scores(
             job_description,
-            resume_matches
+            resume_matches,
+            resumes
         )
         
         return self._prepare_ranked_results(resume_scores, resume_matches, resumes)
@@ -115,29 +117,26 @@ class Matcher:
             }
         }
 
-    def _prepare_ranked_results(self, resume_scores: Dict[str, float], 
-                              resume_matches: Dict[str, Dict], 
-                              resumes: List[Dict]) -> List[Dict]:
-        """Prepare final ranked results for output"""
-        # Create a lookup for resume data
-        resume_lookup = {r['id']: r for r in resumes}
-        
-        # Combine scores with match details
-        ranked_results = []
-        for resume_id, score in resume_scores.items():
-            resume = resume_lookup[resume_id]
-            ranked_results.append({
+    def _prepare_ranked_results(self, resume_scores: Dict[str, Dict], resume_matches: Dict, resumes: List[Dict]) -> List[Dict]:
+        """Prepare final ranked results with detailed scoring information"""
+        # Convert scores to list and sort
+        scored_resumes = [
+            {
                 'id': resume_id,
-                'category': resume['category'],
-                'score': score,
-                'requirement_matches': resume_matches[resume_id]
-            })
+                'score': score_info['score'],
+                'must_have_coverage': score_info['must_have_coverage'],
+                'nice_to_have_coverage': score_info['nice_to_have_coverage'],
+                'statement_coverage': score_info['statement_coverage'],
+                'requirement_matches': {
+                    'must_have': matches['must_have'],
+                    'nice_to_have': matches['nice_to_have']
+                },
+                'category': next((r['category'] for r in resumes if r['id'] == resume_id), 'unknown')
+            }
+            for resume_id, (score_info, matches) in ((rid, (score, resume_matches[rid])) 
+                for rid, score in resume_scores.items())
+            if score_info['score'] > 0
+        ]
         
-        # Sort by score in descending order
-        ranked_results.sort(key=lambda x: x['score'], reverse=True)
-        
-        # Optionally limit to top N results
-        if self.config['search'].get('top_n_resumes'):
-            ranked_results = ranked_results[:self.config['search']['top_n_resumes']]
-        
-        return ranked_results
+        scored_resumes.sort(key=lambda x: x['score'], reverse=True)
+        return scored_resumes

@@ -29,8 +29,8 @@ class StatementProcessor:
         self.vector_db = None
 
     def normalize_score(self, score: float) -> float:
-        """Normalize a score to [-1, 1] range using sigmoid-like normalization"""
-        return 2.0 / (1.0 + np.exp(-score/2)) - 1.0
+        """Normalize a score to [0, 1] range using sigmoid normalization"""
+        return 1.0 / (1.0 + np.exp(-score))
 
     def normalize_scores(self, scores: Union[List[float], float]) -> Union[List[float], float]:
         """Normalize a single score or list of scores"""
