@@ -24,12 +24,9 @@ matcher_config = {
         'top_n_resumes': 20
     },
     'weights': {
-        'must_have': 0.7,
-        'nice_to_have': 0.3
+        'must_have': 0.6,
+        'nice_to_have': 0.4
     },
-    'normalization': {
-        'factor': 10.0  # Adjust this based on your typical score ranges
-    }
 }
 
 
