@@ -101,7 +101,9 @@ class Matcher:
                     'model_name': 'sentence-transformers/all-MiniLM-L6-v2'
                 },
                 'cross_encoder': {
-                    'model_name': 'cross-encoder/ms-marco-MiniLM-L-6-v2'
+                    'model_name': 'cross-encoder/ms-marco-MiniLM-L-6-v2',
+                    'use_trained_model': True,
+                    'trained_model_path': 'matcher_model/trained_models/final'
                 }
             },
             'search': {
@@ -113,7 +115,7 @@ class Matcher:
                 'nice_to_have': 0.3
             },
             'normalization': {
-                'factor': 10.0  # Adjust this based on your typical score ranges
+                'factor': 10.0
             }
         }
 

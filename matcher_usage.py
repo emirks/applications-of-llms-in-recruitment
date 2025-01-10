@@ -6,6 +6,7 @@ from matcher_model.utils.result_saver import save_matching_results
 import json
 from pathlib import Path
 from tabulate import tabulate
+import time
 
 # Load the real job description from JSON file
 JOB_DESCRIPTION_PATH = "matcher_dataset/job_descriptions/statements/format_json/63ca7a693a2fb6111a882eb4.json"
@@ -16,7 +17,9 @@ matcher_config = {
             'model_name': 'sentence-transformers/all-MiniLM-L6-v2'
         },
         'cross_encoder': {
-            'model_name': 'cross-encoder/ms-marco-MiniLM-L-6-v2'
+            'model_name': 'cross-encoder/ms-marco-MiniLM-L-6-v2',
+            'use_trained_model': True,
+            'trained_model_path': 'matcher_model/trained_models/final'
         }
     },
     'search': {
@@ -24,8 +27,8 @@ matcher_config = {
         'top_n_resumes': 20
     },
     'weights': {
-        'must_have': 0.6,
-        'nice_to_have': 0.4
+        'must_have': 0.7,
+        'nice_to_have': 0.3
     },
 }
 
@@ -129,20 +132,23 @@ if __name__ == "__main__":
     
     # Run matching
     logger.info("Starting matching process")
+    start_time = time.time()
     matches = matcher.match_new(job_description, resumes)
+    end_time = time.time()
     logger.info(f"Found {len(matches)} matching resumes")
+
     
     # Save results
     json_path, txt_path = save_matching_results(matches, job_description)
     
     # Print summary to console
-    logger.info(f"\nTop {len(matches)} Matches:")
+    logger.info(f"\nTop {matcher_config['search']['top_n_resumes']} Matches:")
 
     # Prepare table data
     headers = ["Resume ID", "Score", "Category", "JD Must-Have Coverage", "JD Nice-to-Have Coverage", "Resume Statement Coverage"]
     table_data = []
 
-    for match in matches:
+    for match in matches[:matcher_config['search']['top_n_resumes']]:
         resume_id = match['id'].split('/')[-1]  # Get just the filename
         table_data.append([
             resume_id,
@@ -163,4 +169,4 @@ if __name__ == "__main__":
     )
     logger.info(f"\n{table}")
     
-    
+    logger.info(f"Matching process took {end_time - start_time:.2f} seconds")
